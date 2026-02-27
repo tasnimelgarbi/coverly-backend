@@ -402,5 +402,26 @@ app.patch("/promo_codes/:id/active", async (req, res) => {
   }
 });
 
+/* DELETE PROMO CODE */
+app.delete("/promo_codes/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const result = await pool.query(
+      "DELETE FROM promo_codes WHERE id = $1 RETURNING id",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "promo not found" });
+    }
+
+    res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log("Server running on port", PORT));
