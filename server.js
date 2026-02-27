@@ -423,5 +423,73 @@ app.delete("/promo_codes/:id", async (req, res) => {
   }
 });
 
+app.get("/feedbacks", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM feedbacks ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/upload/feedback", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "file is required" });
+
+    const b64 = req.file.buffer.toString("base64");
+    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: "coverly/feedbacks",
+    });
+
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/feedbacks", async (req, res) => {
+  try {
+    const { image_url } = req.body;
+
+    if (!image_url) {
+      return res.status(400).json({ error: "image_url is required" });
+    }
+
+    const result = await pool.query(
+      "INSERT INTO feedbacks (image_url) VALUES ($1) RETURNING *",
+      [image_url]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/feedbacks/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const result = await pool.query(
+      "DELETE FROM feedbacks WHERE id = $1 RETURNING id",
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "feedback not found" });
+    }
+
+    res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log("Server running on port", PORT));
