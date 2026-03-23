@@ -1,9 +1,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { pool } from "./db.js";
 import multer from "multer";
-import cloudinary from "./cloudinary.js";
+import { pool } from "./db.js";
+import { uploadToImgBB } from "./imgbb.js";
 
 dotenv.config();
 
@@ -11,15 +11,17 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 /* TEST ROOT */
 app.get("/", async (req, res) => {
-  const result = await pool.query("SELECT NOW()");
-  res.json({
-    ok: true,
-    dbTime: result.rows[0],
-  });
+  try {
+    const result = await pool.query("SELECT NOW()");
+    res.json({ ok: true, dbTime: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* GET PRODUCTS (OPTIONAL FILTER BY category_slug) */
@@ -69,16 +71,16 @@ app.post("/products", async (req, res) => {
 /* UPLOAD PRODUCT IMAGE */
 app.post("/upload/product", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "file is required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "file is required" });
+    }
 
-    const b64 = req.file.buffer.toString("base64");
-    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+    const url = await uploadToImgBB(
+      req.file.buffer,
+      `product-${Date.now()}`
+    );
 
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: "coverly/products",
-    });
-
-    res.json({ url: result.secure_url });
+    res.json({ url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -87,16 +89,16 @@ app.post("/upload/product", upload.single("file"), async (req, res) => {
 /* UPLOAD PAYMENT IMAGE */
 app.post("/upload/payment", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "file is required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "file is required" });
+    }
 
-    const b64 = req.file.buffer.toString("base64");
-    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+    const url = await uploadToImgBB(
+      req.file.buffer,
+      `payment-${Date.now()}`
+    );
 
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: "coverly/payments",
-    });
-
-    res.json({ url: result.secure_url });
+    res.json({ url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -105,16 +107,16 @@ app.post("/upload/payment", upload.single("file"), async (req, res) => {
 /* UPLOAD CUSTOM DESIGN */
 app.post("/upload/design", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "file is required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "file is required" });
+    }
 
-    const b64 = req.file.buffer.toString("base64");
-    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+    const url = await uploadToImgBB(
+      req.file.buffer,
+      `design-${Date.now()}`
+    );
 
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: "coverly/designs",
-    });
-
-    res.json({ url: result.secure_url });
+    res.json({ url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -124,7 +126,10 @@ app.post("/upload/design", upload.single("file"), async (req, res) => {
 app.delete("/products/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    if (!id) {
+      return res.status(400).json({ error: "invalid id" });
+    }
 
     const result = await pool.query(
       "DELETE FROM products WHERE id = $1 RETURNING id",
@@ -180,11 +185,23 @@ app.post("/orders", async (req, res) => {
     }
 
     const result = await pool.query(
-    `INSERT INTO orders 
-    (customer_name, customer_phone, customer_address, governorate, shipping_fee, notes, payment_image, custom_design_url, total_amount, products)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-    RETURNING *`,
-    [
+      `
+      INSERT INTO orders (
+        customer_name,
+        customer_phone,
+        customer_address,
+        governorate,
+        shipping_fee,
+        notes,
+        payment_image,
+        custom_design_url,
+        total_amount,
+        products
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING *
+      `,
+      [
         customer_name,
         customer_phone,
         customer_address,
@@ -195,7 +212,7 @@ app.post("/orders", async (req, res) => {
         custom_design_url || null,
         total_amount,
         JSON.stringify(products),
-    ]
+      ]
     );
 
     res.status(201).json(result.rows[0]);
@@ -207,10 +224,7 @@ app.post("/orders", async (req, res) => {
 /* ORDERS STATS */
 app.get("/orders/stats", async (req, res) => {
   try {
-    const totalResult = await pool.query(
-      "SELECT COUNT(*) FROM orders"
-    );
-
+    const totalResult = await pool.query("SELECT COUNT(*) FROM orders");
     const pendingResult = await pool.query(
       "SELECT COUNT(*) FROM orders WHERE status = 'pending'"
     );
@@ -254,7 +268,10 @@ app.delete("/orders", async (req, res) => {
 app.get("/orders/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    if (!id) {
+      return res.status(400).json({ error: "invalid id" });
+    }
 
     const result = await pool.query("SELECT * FROM orders WHERE id = $1", [id]);
 
@@ -297,18 +314,25 @@ app.put("/orders/:id/status", async (req, res) => {
 app.get("/promo_codes/validate", async (req, res) => {
   try {
     const code = String(req.query.code || "").trim().toUpperCase();
-    if (!code) return res.status(400).json({ ok: false, reason: "EMPTY" });
+
+    if (!code) {
+      return res.status(400).json({ ok: false, reason: "EMPTY" });
+    }
 
     const { rows } = await pool.query(
       "SELECT * FROM promo_codes WHERE UPPER(code) = $1 LIMIT 1",
       [code]
     );
 
-    if (rows.length === 0) return res.json({ ok: false, reason: "NOT_FOUND" });
+    if (rows.length === 0) {
+      return res.json({ ok: false, reason: "NOT_FOUND" });
+    }
 
     const promo = rows[0];
 
-    if (!promo.is_active) return res.json({ ok: false, reason: "INACTIVE" });
+    if (!promo.is_active) {
+      return res.json({ ok: false, reason: "INACTIVE" });
+    }
 
     if (promo.expires_at && new Date(promo.expires_at) < new Date()) {
       return res.json({ ok: false, reason: "EXPIRED" });
@@ -344,35 +368,38 @@ app.get("/promo_codes", async (req, res) => {
 /* CREATE PROMO CODE */
 app.post("/promo_codes", async (req, res) => {
   try {
-    const { code, discount_percent, is_active, expires_at, usage_limit } =
-      req.body;
+    const { code, discount_percent, is_active, expires_at, usage_limit } = req.body;
 
     const c = String(code || "").trim().toUpperCase();
     const d = Number(discount_percent);
 
     if (!c || !Number.isFinite(d)) {
-      return res.status(400).json({ error: "code and discount_percent required" });
+      return res.status(400).json({
+        error: "code and discount_percent required",
+      });
     }
 
     const result = await pool.query(
-      `INSERT INTO promo_codes (code, discount_percent, is_active, expires_at, usage_limit)
-       VALUES ($1,$2,$3,$4,$5)
-       RETURNING *`,
-      [
-        c,
-        d,
-        is_active ?? true,
-        expires_at || null,
-        usage_limit ?? null,
-      ]
+      `
+      INSERT INTO promo_codes (
+        code,
+        discount_percent,
+        is_active,
+        expires_at,
+        usage_limit
+      )
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING *
+      `,
+      [c, d, is_active ?? true, expires_at || null, usage_limit ?? null]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    // لو الكود مكرر
     if (String(err.message || "").toLowerCase().includes("duplicate")) {
       return res.status(409).json({ error: "code already exists" });
     }
+
     res.status(500).json({ error: err.message });
   }
 });
@@ -406,7 +433,10 @@ app.patch("/promo_codes/:id/active", async (req, res) => {
 app.delete("/promo_codes/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    if (!id) {
+      return res.status(400).json({ error: "invalid id" });
+    }
 
     const result = await pool.query(
       "DELETE FROM promo_codes WHERE id = $1 RETURNING id",
@@ -423,6 +453,7 @@ app.delete("/promo_codes/:id", async (req, res) => {
   }
 });
 
+/* GET FEEDBACKS */
 app.get("/feedbacks", async (req, res) => {
   try {
     const result = await pool.query(
@@ -434,23 +465,25 @@ app.get("/feedbacks", async (req, res) => {
   }
 });
 
+/* UPLOAD FEEDBACK IMAGE */
 app.post("/upload/feedback", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "file is required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "file is required" });
+    }
 
-    const b64 = req.file.buffer.toString("base64");
-    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+    const url = await uploadToImgBB(
+      req.file.buffer,
+      `feedback-${Date.now()}`
+    );
 
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: "coverly/feedbacks",
-    });
-
-    res.json({ url: result.secure_url });
+    res.json({ url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+/* ADD FEEDBACK */
 app.post("/feedbacks", async (req, res) => {
   try {
     const { image_url } = req.body;
@@ -470,10 +503,14 @@ app.post("/feedbacks", async (req, res) => {
   }
 });
 
+/* DELETE FEEDBACK */
 app.delete("/feedbacks/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    if (!id) {
+      return res.status(400).json({ error: "invalid id" });
+    }
 
     const result = await pool.query(
       "DELETE FROM feedbacks WHERE id = $1 RETURNING id",
@@ -490,6 +527,8 @@ app.delete("/feedbacks/:id", async (req, res) => {
   }
 });
 
-
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log("Server running on port", PORT));
+
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});
